@@ -5,7 +5,7 @@
 
 import 'vs/css!./media/extensionsViewlet';
 import { localize } from 'vs/nls';
-import { ThrottledDelayer, always, timeout } from 'vs/base/common/async';
+import { ThrottledDelayer, always, timeout, Queue } from 'vs/base/common/async';
 import { isPromiseCanceledError } from 'vs/base/common/errors';
 import { IWorkbenchContribution } from 'vs/workbench/common/contributions';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
@@ -270,6 +270,8 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 	private defaultRecommendedExtensionsContextKey: IContextKey<boolean>;
 
 	private searchDelayer: ThrottledDelayer<any>;
+	private searchQueue: Queue<any>;
+
 	private root: HTMLElement;
 
 	private searchBox: SuggestEnabledInput;
@@ -300,6 +302,7 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 		super(VIEWLET_ID, `${VIEWLET_ID}.state`, true, configurationService, partService, telemetryService, storageService, instantiationService, themeService, contextMenuService, extensionService, contextService);
 
 		this.searchDelayer = new ThrottledDelayer(500);
+		this.searchQueue = new Queue();
 		this.nonEmptyWorkspaceContextKey = NonEmptyWorkspaceContext.bindTo(contextKeyService);
 		this.searchExtensionsContextKey = SearchExtensionsContext.bindTo(contextKeyService);
 		this.hasInstalledExtensionsContextKey = HasInstalledExtensionsContext.bindTo(contextKeyService);
@@ -437,7 +440,8 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 	}
 
 	private triggerSearch(immediate = false): void {
-		this.searchDelayer.trigger(() => this.doSearch(), immediate || !this.searchBox.getValue() ? 0 : 500).then(null, err => this.onError(err));
+		const search = () => this.searchDelayer.trigger(() => this.doSearch(), immediate || !this.searchBox.getValue() ? 0 : 500).then(null, err => this.onError(err));
+		this.searchQueue.queue(search);
 	}
 
 	private normalizedQuery(): string {
@@ -454,7 +458,7 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 
 		if (value) {
 			return this.progress(Promise.all(this.panels.map(view => {
-				(<ExtensionsListView>view).show(this.normalizedQuery()).then(model => {
+				return (<ExtensionsListView>view).show(value).then(model => {
 					this.alertSearchResult(model.length, view.id);
 				});
 			})));
