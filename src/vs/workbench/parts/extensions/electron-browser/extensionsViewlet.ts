@@ -55,6 +55,7 @@ import { Query } from 'vs/workbench/parts/extensions/common/extensionQuery';
 import { SuggestEnabledInput, attachSuggestEnabledInputBoxStyler } from 'vs/workbench/parts/codeEditor/electron-browser/suggestEnabledInput';
 import { alert } from 'vs/base/browser/ui/aria/aria';
 import { createErrorWithActions } from 'vs/base/common/errorsWithActions';
+import { CancellationToken } from 'vs/base/common/cancellation';
 
 interface SearchInputEvent extends Event {
 	target: HTMLInputElement;
@@ -440,19 +441,20 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 	}
 
 	private triggerSearch(immediate = false): void {
+		this.searchPromise.cancel();
 		const search = () => {
-			this.searchPromise.cancel();
-			this.searchPromise = createCancelablePromise(() => this.doSearch());
+			this.searchPromise = createCancelablePromise(token => this.doSearch(token));
 			return this.searchPromise;
 		};
 		this.searchDelayer.trigger(search, immediate || !this.searchBox.getValue() ? 0 : 500).then(null, err => this.onError(err));
+
 	}
 
 	private normalizedQuery(): string {
 		return this.searchBox.getValue().replace(/@category/g, 'category').replace(/@tag:/g, 'tag:').replace(/@ext:/g, 'ext:');
 	}
 
-	private doSearch(): Promise<any> {
+	private doSearch(token: CancellationToken): Promise<any> {
 		const value = this.normalizedQuery();
 		this.searchExtensionsContextKey.set(!!value);
 		this.searchBuiltInExtensionsContextKey.set(ExtensionsListView.isBuiltInExtensionsQuery(value));
@@ -460,9 +462,9 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 		this.recommendedExtensionsContextKey.set(ExtensionsListView.isRecommendedExtensionsQuery(value));
 		this.nonEmptyWorkspaceContextKey.set(this.contextService.getWorkbenchState() !== WorkbenchState.EMPTY);
 
-		if (value) {
+		if (value && !token.isCancellationRequested) {
 			return this.progress(Promise.all(this.panels.map(view => {
-				return (<ExtensionsListView>view).show(value).then(model => {
+				return (<ExtensionsListView>view).show(value, token).then(model => {
 					this.alertSearchResult(model.length, view.id);
 				});
 			})));
@@ -472,11 +474,15 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 
 	protected onDidAddViews(added: IAddedViewDescriptorRef[]): ViewletPanel[] {
 		const addedViews = super.onDidAddViews(added);
-		this.progress(Promise.all(addedViews.map(addedView => {
-			(<ExtensionsListView>addedView).show(this.normalizedQuery()).then(model => {
-				this.alertSearchResult(model.length, addedView.id);
-			});
-		})));
+
+		this.searchPromise.cancel();
+		this.searchPromise = createCancelablePromise(token => {
+			return this.progress(Promise.all(addedViews.map(addedView => {
+				return (<ExtensionsListView>addedView).show(this.normalizedQuery(), token).then(model => {
+					this.alertSearchResult(model.length, addedView.id);
+				});
+			})));
+		});
 		return addedViews;
 	}
 
