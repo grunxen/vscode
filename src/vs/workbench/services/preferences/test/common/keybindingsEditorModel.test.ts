@@ -35,7 +35,7 @@ class AnAction extends Action {
 	}
 }
 
-suite('Keybindings Editor Model test', () => {
+suite('KeybindingsEditorModel test', () => {
 
 	let instantiationService: TestInstantiationService;
 	let testObject: KeybindingsEditorModel;
@@ -189,7 +189,7 @@ suite('Keybindings Editor Model test', () => {
 		assert.equal(actual.keybindingItem.when, '');
 	});
 
-	test('convert with title and wihtout binding to entry', async () => {
+	test('convert with title and without binding to entry', async () => {
 		const id = 'a' + uuid.generateUuid();
 		registerCommandWithTitle(id, 'some title');
 		prepareKeybindingService();
@@ -555,6 +555,18 @@ suite('Keybindings Editor Model test', () => {
 		await testObject.resolve({});
 		const actual = testObject.fetch('"ctrl+space"').filter(element => element.keybindingItem.command === command);
 		assert.equal(1, actual.length);
+	});
+
+	test('filter exact matches with user settings label', async () => {
+		testObject = instantiationService.createInstance(KeybindingsEditorModel, OperatingSystem.Macintosh);
+		const command = 'a' + uuid.generateUuid();
+		const expected = aResolvedKeybindingItem({ command, firstPart: { keyCode: KeyCode.DownArrow } });
+		prepareKeybindingService(expected, aResolvedKeybindingItem({ command: 'down', firstPart: { keyCode: KeyCode.Escape } }));
+
+		await testObject.resolve({});
+		const actual = testObject.fetch('"down"').filter(element => element.keybindingItem.command === command);
+		assert.equal(1, actual.length);
+		assert.deepEqual(actual[0].keybindingMatches.firstPart, { keyCode: true });
 	});
 
 	function prepareKeybindingService(...keybindingItems: ResolvedKeybindingItem[]): ResolvedKeybindingItem[] {

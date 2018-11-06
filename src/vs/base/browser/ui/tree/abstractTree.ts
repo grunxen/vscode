@@ -3,37 +3,50 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import 'vs/css!./tree';
+import 'vs/css!./media/tree';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
-import { IListOptions, List, IIdentityProvider, IMultipleSelectionController, IListStyles } from 'vs/base/browser/ui/list/listWidget';
+import { IListOptions, List, IIdentityProvider, IMultipleSelectionController, IListStyles, IAccessibilityProvider } from 'vs/base/browser/ui/list/listWidget';
 import { IListVirtualDelegate, IListRenderer, IListMouseEvent, IListEvent, IListContextMenuEvent } from 'vs/base/browser/ui/list/list';
-import { append, $ } from 'vs/base/browser/dom';
+import { append, $, toggleClass } from 'vs/base/browser/dom';
 import { Event, Relay, chain } from 'vs/base/common/event';
 import { StandardKeyboardEvent } from 'vs/base/browser/keyboardEvent';
 import { KeyCode } from 'vs/base/common/keyCodes';
-import { ITreeModel, ITreeNode, ITreeRenderer } from 'vs/base/browser/ui/tree/tree';
+import { ITreeModel, ITreeNode, ITreeRenderer, ITreeModelOptions } from 'vs/base/browser/ui/tree/tree';
 import { ISpliceable } from 'vs/base/common/sequence';
-import { IIndexTreeModelOptions } from 'vs/base/browser/ui/tree/indexTreeModel';
 
-export function createComposedTreeListOptions<T, N extends { element: T }>(options?: IListOptions<T>): IListOptions<N> {
+export function createComposedTreeListOptions<T, R extends { element: T }>(options?: IListOptions<T>): IListOptions<R> | undefined {
 	if (!options) {
 		return undefined;
 	}
 
-	let identityProvider: IIdentityProvider<N> | undefined = undefined;
-	let multipleSelectionController: IMultipleSelectionController<N> | undefined = undefined;
+	let identityProvider: IIdentityProvider<R> | undefined = undefined;
 
 	if (options.identityProvider) {
-		identityProvider = el => options.identityProvider(el.element);
+		const ip = options.identityProvider;
+		identityProvider = el => ip(el.element);
 	}
 
+	let multipleSelectionController: IMultipleSelectionController<R> | undefined = undefined;
+
 	if (options.multipleSelectionController) {
+		const msc = options.multipleSelectionController;
 		multipleSelectionController = {
 			isSelectionSingleChangeEvent(e) {
-				return options.multipleSelectionController.isSelectionSingleChangeEvent({ ...e, element: e.element } as any);
+				return msc.isSelectionSingleChangeEvent({ ...e, element: e.element } as any);
 			},
 			isSelectionRangeChangeEvent(e) {
-				return options.multipleSelectionController.isSelectionRangeChangeEvent({ ...e, element: e.element } as any);
+				return msc.isSelectionRangeChangeEvent({ ...e, element: e.element } as any);
+			}
+		};
+	}
+
+	let accessibilityProvider: IAccessibilityProvider<R> | undefined = undefined;
+
+	if (options.accessibilityProvider) {
+		const ap = options.accessibilityProvider;
+		accessibilityProvider = {
+			getAriaLabel(e) {
+				return ap.getAriaLabel(e.element);
 			}
 		};
 	}
@@ -41,7 +54,8 @@ export function createComposedTreeListOptions<T, N extends { element: T }>(optio
 	return {
 		...options,
 		identityProvider,
-		multipleSelectionController
+		multipleSelectionController,
+		accessibilityProvider
 	};
 }
 
@@ -61,14 +75,6 @@ export class ComposedTreeDelegate<T, N extends { element: T }> implements IListV
 interface ITreeListTemplateData<T> {
 	twistie: HTMLElement;
 	templateData: T;
-}
-
-function renderDefaultTwistie<T>(node: ITreeNode<T, any>, twistie: HTMLElement): void {
-	if (node.children.length === 0 && !node.collapsible) {
-		twistie.innerText = '';
-	} else {
-		twistie.innerText = node.collapsed ? '▹' : '◢';
-	}
 }
 
 class TreeRenderer<T, TFilterData, TTemplateData> implements IListRenderer<ITreeNode<T, TFilterData>, ITreeListTemplateData<TTemplateData>> {
@@ -145,7 +151,12 @@ class TreeRenderer<T, TFilterData, TTemplateData> implements IListRenderer<ITree
 			return;
 		}
 
-		renderDefaultTwistie(node, twistieElement);
+		TreeRenderer.renderDefaultTwistie(node, twistieElement);
+	}
+
+	private static renderDefaultTwistie<T>(node: ITreeNode<T, any>, twistie: HTMLElement): void {
+		toggleClass(twistie, 'collapsible', node.collapsible);
+		toggleClass(twistie, 'collapsed', node.collapsed);
 	}
 
 	dispose(): void {
@@ -159,7 +170,7 @@ function isInputElement(e: HTMLElement): boolean {
 	return e.tagName === 'INPUT' || e.tagName === 'TEXTAREA';
 }
 
-export interface ITreeOptions<T, TFilterData = void> extends IListOptions<T>, IIndexTreeModelOptions<T, TFilterData> { }
+export interface ITreeOptions<T, TFilterData = void> extends IListOptions<T>, ITreeModelOptions<T, TFilterData> { }
 export interface ITreeEvent<T, TFilterData> extends IListEvent<ITreeNode<T, TFilterData>> { }
 export interface ITreeContextMenuEvent<T, TFilterData> extends IListContextMenuEvent<ITreeNode<T, TFilterData>> { }
 
@@ -184,7 +195,7 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 		container: HTMLElement,
 		delegate: IListVirtualDelegate<T>,
 		renderers: ITreeRenderer<T, TFilterData, any>[],
-		options?: ITreeOptions<T, TFilterData>
+		options: ITreeOptions<T, TFilterData> = {}
 	) {
 		const treeDelegate = new ComposedTreeDelegate<T, ITreeNode<T, TFilterData>>(delegate);
 
@@ -192,7 +203,7 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 		const treeRenderers = renderers.map(r => new TreeRenderer<T, TFilterData, any>(r, onDidChangeCollapseStateRelay.event));
 		this.disposables.push(...treeRenderers);
 
-		this.view = new List(container, treeDelegate, treeRenderers, createComposedTreeListOptions<T, ITreeNode<T, TFilterData>>(options));
+		this.view = new List(container, treeDelegate, treeRenderers, createComposedTreeListOptions(options));
 		this.onDidChangeFocus = this.view.onFocusChange;
 		this.onDidChangeSelection = this.view.onSelectionChange;
 		this.onContextMenu = this.view.onContextMenu;
@@ -202,15 +213,19 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 		this.onDidChangeCollapseState = this.model.onDidChangeCollapseState;
 		this.onDidChangeRenderNodeCount = this.model.onDidChangeRenderNodeCount;
 
-		this.view.onMouseClick(this.onMouseClick, this, this.disposables);
+		if (options.mouseSupport !== false) {
+			this.view.onMouseClick(this.onMouseClick, this, this.disposables);
+		}
 
-		const onKeyDown = chain(this.view.onKeyDown)
-			.filter(e => !isInputElement(e.target as HTMLElement))
-			.map(e => new StandardKeyboardEvent(e));
+		if (options.keyboardSupport !== false) {
+			const onKeyDown = chain(this.view.onKeyDown)
+				.filter(e => !isInputElement(e.target as HTMLElement))
+				.map(e => new StandardKeyboardEvent(e));
 
-		onKeyDown.filter(e => e.keyCode === KeyCode.LeftArrow).on(this.onLeftArrow, this, this.disposables);
-		onKeyDown.filter(e => e.keyCode === KeyCode.RightArrow).on(this.onRightArrow, this, this.disposables);
-		onKeyDown.filter(e => e.keyCode === KeyCode.Space).on(this.onSpace, this, this.disposables);
+			onKeyDown.filter(e => e.keyCode === KeyCode.LeftArrow).on(this.onLeftArrow, this, this.disposables);
+			onKeyDown.filter(e => e.keyCode === KeyCode.RightArrow).on(this.onRightArrow, this, this.disposables);
+			onKeyDown.filter(e => e.keyCode === KeyCode.Space).on(this.onSpace, this, this.disposables);
+		}
 	}
 
 	// Widget
@@ -233,16 +248,16 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 
 	// Tree navigation
 
-	getParentElement(ref: TRef | null = null): T | null {
-		return this.model.getParentElement(ref);
+	getParentElement(location: TRef | null = null): T | null {
+		return this.model.getParentElement(location);
 	}
 
-	getFirstElementChild(ref: TRef | null = null): T | null {
-		return this.model.getFirstElementChild(ref);
+	getFirstElementChild(location: TRef | null = null): T | null {
+		return this.model.getFirstChildElement(location);
 	}
 
-	getLastElementAncestor(ref: TRef | null = null): T | null {
-		return this.model.getLastElementAncestor(ref);
+	getLastElementAncestor(location: TRef | null = null): T | null {
+		return this.model.getLastAncestorElement(location);
 	}
 
 	// Tree
@@ -259,20 +274,20 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 		return this.model.setCollapsed(location, false);
 	}
 
-	toggleCollapsed(ref: TRef): void {
-		this.model.toggleCollapsed(ref);
+	toggleCollapsed(location: TRef): void {
+		this.model.toggleCollapsed(location);
 	}
 
 	collapseAll(): void {
 		this.model.collapseAll();
 	}
 
-	isCollapsed(ref: TRef): boolean {
-		return this.model.isCollapsed(ref);
+	isCollapsed(location: TRef): boolean {
+		return this.model.isCollapsed(location);
 	}
 
-	isExpanded(ref: TRef): boolean {
-		return !this.isCollapsed(ref);
+	isExpanded(location: TRef): boolean {
+		return !this.isCollapsed(location);
 	}
 
 	refilter(): void {
@@ -289,33 +304,33 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 		return nodes.map(n => n.element);
 	}
 
-	setFocus(elements: TRef[]): void {
+	setFocus(elements: TRef[], browserEvent?: UIEvent): void {
 		const indexes = elements.map(e => this.model.getListIndex(e));
-		this.view.setFocus(indexes);
+		this.view.setFocus(indexes, browserEvent);
 	}
 
-	focusNext(n = 1, loop = false): void {
-		this.view.focusNext(n, loop);
+	focusNext(n = 1, loop = false, browserEvent?: UIEvent): void {
+		this.view.focusNext(n, loop, browserEvent);
 	}
 
-	focusPrevious(n = 1, loop = false): void {
-		this.view.focusPrevious(n, loop);
+	focusPrevious(n = 1, loop = false, browserEvent?: UIEvent): void {
+		this.view.focusPrevious(n, loop, browserEvent);
 	}
 
-	focusNextPage(): void {
-		this.view.focusNextPage();
+	focusNextPage(browserEvent?: UIEvent): void {
+		this.view.focusNextPage(browserEvent);
 	}
 
-	focusPreviousPage(): void {
-		this.view.focusPreviousPage();
+	focusPreviousPage(browserEvent?: UIEvent): void {
+		this.view.focusPreviousPage(browserEvent);
 	}
 
-	focusLast(): void {
-		this.view.focusLast();
+	focusLast(browserEvent?: UIEvent): void {
+		this.view.focusLast(browserEvent);
 	}
 
-	focusFirst(): void {
-		this.view.focusFirst();
+	focusFirst(browserEvent?: UIEvent): void {
+		this.view.focusFirst(browserEvent);
 	}
 
 	getFocus(): T[] {
@@ -344,8 +359,12 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 
 	private onMouseClick(e: IListMouseEvent<ITreeNode<T, TFilterData>>): void {
 		const node = e.element;
-		const location = this.model.getNodeLocation(node);
 
+		if (!node) {
+			return;
+		}
+
+		const location = this.model.getNodeLocation(node);
 		this.model.toggleCollapsed(location);
 	}
 
@@ -424,7 +443,5 @@ export abstract class AbstractTree<T, TFilterData, TRef> implements IDisposable 
 	dispose(): void {
 		this.disposables = dispose(this.disposables);
 		this.view.dispose();
-		this.view = null;
-		this.model = null;
 	}
 }

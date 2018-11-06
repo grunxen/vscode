@@ -6,7 +6,6 @@
 import 'vs/css!vs/workbench/parts/debug/browser/media/repl';
 import * as nls from 'vs/nls';
 import { URI as uri } from 'vs/base/common/uri';
-import { TPromise } from 'vs/base/common/winjs.base';
 import * as errors from 'vs/base/common/errors';
 import { IAction, IActionItem, Action } from 'vs/base/common/actions';
 import * as dom from 'vs/base/browser/dom';
@@ -101,9 +100,9 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 		@IThemeService protected themeService: IThemeService,
 		@IModelService private modelService: IModelService,
 		@IContextKeyService private contextKeyService: IContextKeyService,
-		@ICodeEditorService codeEditorService: ICodeEditorService,
+		@ICodeEditorService codeEditorService: ICodeEditorService
 	) {
-		super(REPL_ID, telemetryService, themeService);
+		super(REPL_ID, telemetryService, themeService, storageService);
 
 		this.replInputHeight = Repl.REPL_INPUT_INITIAL_HEIGHT;
 		this.history = new HistoryNavigator(JSON.parse(this.storageService.get(HISTORY_STORAGE_KEY, StorageScope.WORKSPACE, '[]')), 50);
@@ -113,9 +112,7 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 
 	private registerListeners(): void {
 		this._register(this.debugService.getViewModel().onDidFocusSession(session => {
-			if (this.isVisible()) {
-				this.selectSession(session);
-			}
+			this.selectSession(session);
 		}));
 		this._register(this.debugService.onDidNewSession(() => this.updateTitleArea()));
 		this._register(this.themeService.onThemeChange(() => {
@@ -125,20 +122,16 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 		}));
 	}
 
-	setVisible(visible: boolean): Promise<void> {
+	setVisible(visible: boolean): void {
+		super.setVisible(visible);
 		if (!visible) {
 			dispose(this.model);
 		} else {
 			this.model = this.modelService.createModel('', null, uri.parse(`${DEBUG_SCHEME}:replinput`), true);
 			this.replInput.setModel(this.model);
 			this.updateInputDecoration();
-			const focusedSession = this.debugService.getViewModel().focusedSession;
-			if (focusedSession && this.tree.getInput() !== focusedSession) {
-				this.selectSession(focusedSession);
-			}
+			this.refreshReplElements(true);
 		}
-
-		return super.setVisible(visible);
 	}
 
 	get isReadonly(): boolean {
@@ -171,10 +164,10 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 	}
 
 	selectSession(session: IDebugSession): void {
-		if (this.replElementsChangeListener) {
-			this.replElementsChangeListener.dispose();
-		}
 		if (session) {
+			if (this.replElementsChangeListener) {
+				this.replElementsChangeListener.dispose();
+			}
 			this.replElementsChangeListener = session.onDidChangeReplElements(() => {
 				this.refreshReplElements(session.getReplElements().length === 0);
 			});
@@ -257,15 +250,6 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 		return result;
 	}
 
-	shutdown(): void {
-		const replHistory = this.history.getHistory();
-		if (replHistory.length) {
-			this.storageService.store(HISTORY_STORAGE_KEY, JSON.stringify(replHistory), StorageScope.WORKSPACE);
-		} else {
-			this.storageService.remove(HISTORY_STORAGE_KEY, StorageScope.WORKSPACE);
-		}
-	}
-
 	// --- Cached locals
 	@memoize
 	private get characterWidth(): number {
@@ -291,8 +275,8 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 
 	// --- Creation
 
-	async create(parent: HTMLElement): Promise<void> {
-		await super.create(parent);
+	create(parent: HTMLElement): void {
+		super.create(parent);
 		this.container = dom.append(parent, $('.repl'));
 		this.treeContainer = dom.append(this.container, $('.repl-tree'));
 		this.createReplInput(this.container);
@@ -307,6 +291,12 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 			accessibilityProvider: new ReplExpressionsAccessibilityProvider(),
 			controller
 		}, replTreeOptions);
+
+		// Make sure to select the session if debugging is already active
+		const focusedSession = this.debugService.getViewModel().focusedSession;
+		if (focusedSession) {
+			this.selectSession(focusedSession);
+		}
 	}
 
 	private createReplInput(container: HTMLElement): void {
@@ -358,6 +348,9 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 		this._register(this.replInput.onDidChangeModelContent(() => {
 			this.historyNavigationEnablement.set(this.replInput.getModel().getValue() === '');
 		}));
+		// We add the input decoration only when the focus is in the input #61126
+		this._register(this.replInput.onDidFocusEditorText(() => this.updateInputDecoration()));
+		this._register(this.replInput.onDidBlurEditorText(() => this.updateInputDecoration()));
 
 		this._register(dom.addStandardDisposableListener(this.replInputContainer, dom.EventType.FOCUS, () => dom.addClass(this.replInputContainer, 'synthetic-focus')));
 		this._register(dom.addStandardDisposableListener(this.replInputContainer, dom.EventType.BLUR, () => dom.removeClass(this.replInputContainer, 'synthetic-focus')));
@@ -391,7 +384,7 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 		}
 
 		const decorations: IDecorationOptions[] = [];
-		if (this.isReadonly) {
+		if (this.isReadonly && this.replInput.hasTextFocus()) {
 			decorations.push({
 				range: {
 					startLineNumber: 0,
@@ -401,7 +394,7 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 				},
 				renderOptions: {
 					after: {
-						contentText: nls.localize('startDebugFirst', "Please start a debug session to evaluate"),
+						contentText: nls.localize('startDebugFirst', "Please start a debug session to evaluate expressions"),
 						color: transparent(editorForeground, 0.4)(this.themeService.getTheme()).toString()
 					}
 				}
@@ -409,6 +402,17 @@ export class Repl extends Panel implements IPrivateReplService, IHistoryNavigati
 		}
 
 		this.replInput.setDecorations(DECORATION_KEY, decorations);
+	}
+
+	protected saveState(): void {
+		const replHistory = this.history.getHistory();
+		if (replHistory.length) {
+			this.storageService.store(HISTORY_STORAGE_KEY, JSON.stringify(replHistory), StorageScope.WORKSPACE);
+		} else {
+			this.storageService.remove(HISTORY_STORAGE_KEY, StorageScope.WORKSPACE);
+		}
+
+		super.saveState();
 	}
 
 	dispose(): void {
@@ -436,7 +440,7 @@ class AcceptReplInputAction extends EditorAction {
 		});
 	}
 
-	run(accessor: ServicesAccessor, editor: ICodeEditor): void | TPromise<void> {
+	run(accessor: ServicesAccessor, editor: ICodeEditor): void | Promise<void> {
 		SuggestController.get(editor).acceptSelectedSuggestion();
 		accessor.get(IPrivateReplService).acceptReplInput();
 	}
@@ -453,7 +457,7 @@ export class ReplCopyAllAction extends EditorAction {
 		});
 	}
 
-	run(accessor: ServicesAccessor, editor: ICodeEditor): void | TPromise<void> {
+	run(accessor: ServicesAccessor, editor: ICodeEditor): void | Promise<void> {
 		clipboard.writeText(accessor.get(IPrivateReplService).getVisibleContent());
 	}
 }
@@ -491,7 +495,7 @@ class SelectReplAction extends Action {
 		super(id, label);
 	}
 
-	run(sessionName: string): TPromise<any> {
+	run(sessionName: string): Promise<any> {
 		const session = this.debugService.getModel().getSessions(true).filter(p => p.getLabel() === sessionName).pop();
 		// If session is already the focused session we need to manualy update the tree since view model will not send a focused change event
 		if (session && session.state !== State.Inactive && session !== this.debugService.getViewModel().focusedSession) {
@@ -515,7 +519,7 @@ class ClearReplAction extends Action {
 		super(id, label, 'debug-action clear-repl');
 	}
 
-	public run(): TPromise<any> {
+	public run(): Promise<any> {
 		this.replService.clearRepl();
 		aria.status(nls.localize('debugConsoleCleared', "Debug console was cleared"));
 

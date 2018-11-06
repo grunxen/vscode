@@ -22,8 +22,7 @@ import { RangeHighlightDecorations } from 'vs/workbench/browser/parts/editor/ran
 import { IThemeService } from 'vs/platform/theme/common/themeService';
 import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
 import { IMarkersWorkbenchService } from 'vs/workbench/parts/markers/electron-browser/markers';
-import { IStorageService } from 'vs/platform/storage/common/storage';
-import { Scope } from 'vs/workbench/common/memento';
+import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
 import { localize } from 'vs/nls';
 import { IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { Iterator } from 'vs/base/common/iterator';
@@ -36,7 +35,7 @@ import { mixin, deepClone } from 'vs/base/common/objects';
 import { IWorkspaceFolder, IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
 import { isAbsolute, join } from 'vs/base/common/paths';
 import { ITreeContextMenuEvent } from 'vs/base/browser/ui/tree/abstractTree';
-import { FilterData, FileResourceMarkersRenderer, Filter, VirtualDelegate, ResourceMarkersRenderer, MarkerRenderer, RelatedInformationRenderer, TreeElement } from 'vs/workbench/parts/markers/electron-browser/markersTreeViewer';
+import { FilterData, FileResourceMarkersRenderer, Filter, VirtualDelegate, ResourceMarkersRenderer, MarkerRenderer, RelatedInformationRenderer, TreeElement, MarkersTreeAccessibilityProvider } from 'vs/workbench/parts/markers/electron-browser/markersTreeViewer';
 import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
 import { Separator, ActionItem } from 'vs/base/browser/ui/actionbar/actionbar';
 import { IMenuService, MenuId } from 'vs/platform/actions/common/actions';
@@ -78,7 +77,7 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 	private treeContainer: HTMLElement;
 	private messageBoxContainer: HTMLElement;
 	private ariaLabelElement: HTMLElement;
-	private panelSettings: any;
+	private panelState: object;
 	private panelFoucusContextKey: IContextKey<boolean>;
 
 	private filter: Filter;
@@ -103,13 +102,13 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 		@IMenuService private menuService: IMenuService,
 		@IKeybindingService private keybindingService: IKeybindingService,
 	) {
-		super(Constants.MARKERS_PANEL_ID, telemetryService, themeService);
+		super(Constants.MARKERS_PANEL_ID, telemetryService, themeService, storageService);
 		this.panelFoucusContextKey = Constants.MarkerPanelFocusContextKey.bindTo(contextKeyService);
-		this.panelSettings = this.getMemento(storageService, Scope.WORKSPACE);
+		this.panelState = this.getMemento(StorageScope.WORKSPACE);
 		this.setCurrentActiveEditor();
 	}
 
-	public create(parent: HTMLElement): Promise<void> {
+	public create(parent: HTMLElement): void {
 		super.create(parent);
 
 		this.rangeHighlightDecorations = this._register(this.instantiationService.createInstance(RangeHighlightDecorations));
@@ -130,8 +129,6 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 		this.onDidBlur(() => this.panelFoucusContextKey.set(false));
 
 		this.render();
-
-		return Promise.resolve(null);
 	}
 
 	public getTitle(): string {
@@ -160,18 +157,16 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 		}
 	}
 
-	public setVisible(visible: boolean): Promise<void> {
+	public setVisible(visible: boolean): void {
 		const wasVisible = this.isVisible();
-		return super.setVisible(visible)
-			.then(() => {
-				if (this.isVisible()) {
-					if (!wasVisible) {
-						this.refreshPanel();
-					}
-				} else {
-					this.rangeHighlightDecorations.removeHighlightRange();
-				}
-			});
+		super.setVisible(visible);
+		if (this.isVisible()) {
+			if (!wasVisible) {
+				this.refreshPanel();
+			}
+		} else {
+			this.rangeHighlightDecorations.removeHighlightRange();
+		}
 	}
 
 	public getActions(): IAction[] {
@@ -226,6 +221,9 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 		this.filter.options = new FilterOptions(this.filterAction.filterText, excludeExpression);
 		this.tree.refilter();
 		this._onDidFilter.fire();
+
+		const { total, filtered } = this.getFilterStats();
+		dom.toggleClass(this.treeContainer, 'hidden', total > 0 && filtered === 0);
 		this.renderMessage();
 	}
 
@@ -291,13 +289,16 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 			this.instantiationService.createInstance(RelatedInformationRenderer)
 		];
 		this.filter = new Filter();
+		const accessibilityProvider = this.instantiationService.createInstance(MarkersTreeAccessibilityProvider);
 
 		this.tree = this.instantiationService.createInstance(WorkbenchObjectTree,
 			this.treeContainer,
 			virtualDelegate,
 			renderers,
 			{
-				filter: this.filter
+				filter: this.filter,
+				accessibilityProvider,
+				identityProvider: (element: TreeElement) => element.hash
 			}
 		) as any as WorkbenchObjectTree<TreeElement, FilterData>;
 
@@ -329,8 +330,8 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 		}));
 
 		// move focus to input, whenever a key is pressed in the panel container
-		this._register(domEvent(parent, 'keydown', true)(() => {
-			if (this.filterInputActionItem) {
+		this._register(domEvent(parent, 'keydown')(e => {
+			if (this.filterInputActionItem && this.keybindingService.mightProducePrintableCharacter(e)) {
 				this.filterInputActionItem.focus();
 			}
 		}));
@@ -345,7 +346,7 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 			this.tree.focusFirst();
 		});
 
-		this.filterAction = this.instantiationService.createInstance(MarkersFilterAction, { filterText: this.panelSettings['filter'] || '', filterHistory: this.panelSettings['filterHistory'] || [], useFilesExclude: !!this.panelSettings['useFilesExclude'] });
+		this.filterAction = this.instantiationService.createInstance(MarkersFilterAction, { filterText: this.panelState['filter'] || '', filterHistory: this.panelState['filterHistory'] || [], useFilesExclude: !!this.panelState['useFilesExclude'] });
 		this.actions = [this.filterAction, this.collapseAllAction];
 	}
 
@@ -640,13 +641,12 @@ export class MarkersPanel extends Panel implements IMarkerFilterController {
 		return { total, filtered };
 	}
 
-	public shutdown(): void {
-		// store memento
-		this.panelSettings['filter'] = this.filterAction.filterText;
-		this.panelSettings['filterHistory'] = this.filterAction.filterHistory;
-		this.panelSettings['useFilesExclude'] = this.filterAction.useFilesExclude;
+	protected saveState(): void {
+		this.panelState['filter'] = this.filterAction.filterText;
+		this.panelState['filterHistory'] = this.filterAction.filterHistory;
+		this.panelState['useFilesExclude'] = this.filterAction.useFilesExclude;
 
-		super.shutdown();
+		super.saveState();
 	}
 
 	public dispose(): void {

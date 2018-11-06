@@ -6,17 +6,17 @@
 import { localize } from 'vs/nls';
 import { dispose } from 'vs/base/common/lifecycle';
 import { assign } from 'vs/base/common/objects';
-import { chain } from 'vs/base/common/event';
+import { chain, Emitter } from 'vs/base/common/event';
 import { isPromiseCanceledError } from 'vs/base/common/errors';
 import { PagedModel, IPagedModel, IPager, DelayedPagedModel } from 'vs/base/common/paging';
-import { SortBy, SortOrder, IQueryOptions, LocalExtensionType, IExtensionTipsService, EnablementState, IExtensionRecommendation } from 'vs/platform/extensionManagement/common/extensionManagement';
+import { SortBy, SortOrder, IQueryOptions, LocalExtensionType, IExtensionTipsService, IExtensionRecommendation } from 'vs/platform/extensionManagement/common/extensionManagement';
 import { areSameExtensions } from 'vs/platform/extensionManagement/common/extensionManagementUtil';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
 import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
 import { append, $, toggleClass } from 'vs/base/browser/dom';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { Delegate, Renderer } from 'vs/workbench/parts/extensions/electron-browser/extensionsList';
-import { IExtension, IExtensionsWorkbenchService } from '../common/extensions';
+import { Delegate, Renderer, IExtensionWithFocus as IExtension } from 'vs/workbench/parts/extensions/electron-browser/extensionsList';
+import { IExtension as IExtensionBase, IExtensionsWorkbenchService } from '../common/extensions';
 import { Query } from '../common/extensionQuery';
 import { IExtensionService } from 'vs/workbench/services/extensions/common/extensions';
 import { IThemeService } from 'vs/platform/theme/common/themeService';
@@ -37,7 +37,7 @@ import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace
 import { distinct } from 'vs/base/common/arrays';
 import { IExperimentService, IExperiment, ExperimentActionType } from 'vs/workbench/parts/experiments/node/experimentService';
 import { alert } from 'vs/base/browser/ui/aria/aria';
-import { IListContextMenuEvent } from 'vs/base/browser/ui/list/list';
+import { IListContextMenuEvent, IListEvent } from 'vs/base/browser/ui/list/list';
 import { createErrorWithActions } from 'vs/base/common/errorsWithActions';
 import { CancellationToken } from 'vs/base/common/cancellation';
 
@@ -94,6 +94,7 @@ export class ExtensionsListView extends ViewletPanel {
 			setRowLineHeight: false
 		}) as WorkbenchPagedList<IExtension>;
 		this.list.onContextMenu(e => this.onContextMenu(e), this, this.disposables);
+		this.list.onFocusChange(e => this.onFocusChange(e), this, this.disposables);
 		this.disposables.push(this.list);
 
 		chain(this.list.onOpen)
@@ -123,9 +124,6 @@ export class ExtensionsListView extends ViewletPanel {
 			case 'installs': options = assign(options, { sortBy: SortBy.InstallCount }); break;
 			case 'rating': options = assign(options, { sortBy: SortBy.WeightedRating }); break;
 			case 'name': options = assign(options, { sortBy: SortBy.Title }); break;
-		}
-		if (!query || !query.trim()) {
-			options.sortBy = SortBy.InstallCount;
 		}
 
 		const successCallback = model => {
@@ -160,6 +158,13 @@ export class ExtensionsListView extends ViewletPanel {
 		const emptyModel = new PagedModel([]);
 		this.setModel(emptyModel);
 		return Promise.resolve(emptyModel);
+	}
+
+	private currentlyFocusedItems: IExtension[] = [];
+	private onFocusChange(e: IListEvent<IExtension>): void {
+		this.currentlyFocusedItems.forEach(item => item.onFocusChangeEventEmitter.fire(false));
+		this.currentlyFocusedItems = e.elements;
+		this.currentlyFocusedItems.forEach(item => item.onFocusChangeEventEmitter.fire(true));
 	}
 
 	private onContextMenu(e: IListContextMenuEvent<IExtension>): void {
@@ -204,7 +209,7 @@ export class ExtensionsListView extends ViewletPanel {
 						&& Array.isArray(e.local.manifest.contributes.themes)
 						&& e.local.manifest.contributes.themes.length;
 				});
-				return new PagedModel(this.sortExtensions(themesExtensions, options));
+				return this.getPagedModel(this.sortExtensions(themesExtensions, options));
 			}
 			if (showBasicsOnly) {
 				const basics = result.filter(e => {
@@ -214,7 +219,7 @@ export class ExtensionsListView extends ViewletPanel {
 						&& e.local.manifest.contributes.grammars.length
 						&& e.local.identifier.id !== 'git';
 				});
-				return new PagedModel(this.sortExtensions(basics, options));
+				return this.getPagedModel(this.sortExtensions(basics, options));
 			}
 			if (showFeaturesOnly) {
 				const others = result.filter(e => {
@@ -223,10 +228,10 @@ export class ExtensionsListView extends ViewletPanel {
 						&& (!Array.isArray(e.local.manifest.contributes.grammars) || e.local.identifier.id === 'git')
 						&& !Array.isArray(e.local.manifest.contributes.themes);
 				});
-				return new PagedModel(this.sortExtensions(others, options));
+				return this.getPagedModel(this.sortExtensions(others, options));
 			}
 
-			return new PagedModel(this.sortExtensions(result, options));
+			return this.getPagedModel(this.sortExtensions(result, options));
 		}
 
 		const categories: string[] = [];
@@ -249,7 +254,7 @@ export class ExtensionsListView extends ViewletPanel {
 					&& (e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1)
 					&& (!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category))));
 
-			return new PagedModel(this.sortExtensions(result, options));
+			return this.getPagedModel(this.sortExtensions(result, options));
 		}
 
 
@@ -263,7 +268,7 @@ export class ExtensionsListView extends ViewletPanel {
 					&& (extension.name.toLowerCase().indexOf(value) > -1 || extension.displayName.toLowerCase().indexOf(value) > -1)
 					&& (!categories.length || categories.some(category => extension.local.manifest.categories.some(c => c.toLowerCase() === category))));
 
-			return new PagedModel(this.sortExtensions(result, options));
+			return this.getPagedModel(this.sortExtensions(result, options));
 		}
 
 		if (/@disabled/i.test(value)) {
@@ -278,29 +283,33 @@ export class ExtensionsListView extends ViewletPanel {
 					&& (e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1)
 					&& (!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category))));
 
-			return new PagedModel(this.sortExtensions(result, options));
+			return this.getPagedModel(this.sortExtensions(result, options));
 		}
 
 		if (/@enabled/i.test(value)) {
 			value = value ? value.replace(/@enabled/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase() : '';
 
-			const local = await this.extensionsWorkbenchService.queryLocal();
+			const local = (await this.extensionsWorkbenchService.queryLocal()).filter(e => e.type === LocalExtensionType.User);
+			const runningExtensions = await this.extensionService.getExtensions();
 
-			let result = local
+			const result = local
 				.sort((e1, e2) => e1.displayName.localeCompare(e2.displayName))
-				.filter(e => e.type === LocalExtensionType.User &&
-					(e.enablementState === EnablementState.Enabled || e.enablementState === EnablementState.WorkspaceEnabled) &&
-					(e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1) &&
-					(!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category)))
-				);
+				.filter(e => runningExtensions.some(r => areSameExtensions(r, e))
+					&& (e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1)
+					&& (!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category))));
 
-			return new PagedModel(this.sortExtensions(result, options));
+			return this.getPagedModel(this.sortExtensions(result, options));
 		}
 
 		return new PagedModel([]);
 	}
 
 	private async queryGallery(query: Query, options: IQueryOptions): Promise<IPagedModel<IExtension>> {
+		const hasUserDefinedSortOrder = options.sortBy !== undefined;
+		if (!hasUserDefinedSortOrder && !query.value.trim()) {
+			options.sortBy = SortBy.InstallCount;
+		}
+
 		let value = query.value;
 
 		const idRegex = /@id:(([a-z0-9A-Z][a-z0-9\-A-Z]*)\.([a-z0-9A-Z][a-z0-9\-A-Z]*))/g;
@@ -313,7 +322,7 @@ export class ExtensionsListView extends ViewletPanel {
 
 		if (names.length) {
 			return this.extensionsWorkbenchService.queryGallery({ names, source: 'queryById' })
-				.then(pager => new PagedModel(pager));
+				.then(pager => this.getPagedModel(pager));
 		}
 
 		if (ExtensionsListView.isWorkspaceRecommendedExtensionsQuery(query.value)) {
@@ -350,18 +359,20 @@ export class ExtensionsListView extends ViewletPanel {
 
 			if (text !== query.value) {
 				options = assign(options, { text: text.substr(0, 350), source: 'file-extension-tags' });
-				return this.extensionsWorkbenchService.queryGallery(options).then(pager => new PagedModel(pager));
+				return this.extensionsWorkbenchService.queryGallery(options).then(pager => this.getPagedModel(pager));
 			}
 		}
 
 		let preferredResults: string[] = [];
 		if (text) {
 			options = assign(options, { text: text.substr(0, 350), source: 'searchText' });
-			for (let i = 0; i < this.searchExperiments.length; i++) {
-				if (text.toLowerCase() === this.searchExperiments[i].action.properties['searchText'] && Array.isArray(this.searchExperiments[i].action.properties['preferredResults'])) {
-					preferredResults = this.searchExperiments[i].action.properties['preferredResults'];
-					options.source += `-experiment-${this.searchExperiments[i].id}`;
-					break;
+			if (!hasUserDefinedSortOrder) {
+				for (let i = 0; i < this.searchExperiments.length; i++) {
+					if (text.toLowerCase() === this.searchExperiments[i].action.properties['searchText'] && Array.isArray(this.searchExperiments[i].action.properties['preferredResults'])) {
+						preferredResults = this.searchExperiments[i].action.properties['preferredResults'];
+						options.source += `-experiment-${this.searchExperiments[i].id}`;
+						break;
+					}
 				}
 			}
 		} else {
@@ -383,7 +394,7 @@ export class ExtensionsListView extends ViewletPanel {
 				}
 			}
 		}
-		return new PagedModel(pager);
+		return this.getPagedModel(pager);
 
 	}
 
@@ -442,7 +453,7 @@ export class ExtensionsListView extends ViewletPanel {
 						return this.extensionsWorkbenchService.queryGallery(assign(options, { names, pageSize: names.length }))
 							.then(pager => {
 								this.sortFirstPage(pager, names);
-								return new PagedModel(pager || []);
+								return this.getPagedModel(pager || []);
 							});
 					});
 			});
@@ -455,7 +466,7 @@ export class ExtensionsListView extends ViewletPanel {
 			options.source = `curated:${value}`;
 			const pager = await this.extensionsWorkbenchService.queryGallery(assign(options, { names, pageSize: names.length }));
 			this.sortFirstPage(pager, names);
-			return new PagedModel(pager || []);
+			return this.getPagedModel(pager || []);
 		}
 		return new PagedModel([]);
 	}
@@ -501,7 +512,7 @@ export class ExtensionsListView extends ViewletPanel {
 						return this.extensionsWorkbenchService.queryGallery(assign(options, { names, pageSize: names.length }))
 							.then(pager => {
 								this.sortFirstPage(pager, names);
-								return new PagedModel(pager || []);
+								return this.getPagedModel(pager || []);
 							});
 					});
 			});
@@ -557,7 +568,7 @@ export class ExtensionsListView extends ViewletPanel {
 				}
 				options.source = 'recommendations-workspace';
 				return this.extensionsWorkbenchService.queryGallery(assign(options, { names, pageSize: names.length }))
-					.then(pager => new PagedModel(pager || []));
+					.then(pager => this.getPagedModel(pager || []));
 			});
 	}
 
@@ -571,7 +582,7 @@ export class ExtensionsListView extends ViewletPanel {
 		}
 		options.source = 'recommendations-keymaps';
 		return this.extensionsWorkbenchService.queryGallery(assign(options, { names, pageSize: names.length }))
-			.then(result => new PagedModel(result));
+			.then(result => this.getPagedModel(result));
 	}
 
 	// Sorts the firsPage of the pager in the same order as given array of extension ids
@@ -634,6 +645,32 @@ export class ExtensionsListView extends ViewletPanel {
 		}
 
 		this.notificationService.error(err);
+	}
+
+	private getPagedModel(arg: IPager<IExtensionBase> | IExtensionBase[]): IPagedModel<IExtension> {
+		const convert = (ext: IExtension): IExtension => {
+			const eventEmitter = new Emitter<boolean>();
+			const extFocus: IExtension = ext;
+			extFocus.onFocusChangeEventEmitter = eventEmitter;
+			extFocus.onDidFocusChange = eventEmitter.event;
+			return extFocus;
+		};
+
+		if (Array.isArray(arg)) {
+			return new PagedModel(arg.map(ext => convert(ext)));
+		}
+
+		const pager = {
+			total: arg.total,
+			pageSize: arg.pageSize,
+			firstPage: arg.firstPage.map(ext => convert(ext)),
+			getPage: (pageIndex: number, cancellationToken: CancellationToken) => {
+				return arg.getPage(pageIndex, cancellationToken).then(extensions => {
+					return extensions.map(ext => convert(ext));
+				});
+			}
+		};
+		return new PagedModel(pager);
 	}
 
 	dispose(): void {

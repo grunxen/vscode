@@ -56,6 +56,7 @@ import { SuggestEnabledInput, attachSuggestEnabledInputBoxStyler } from 'vs/work
 import { alert } from 'vs/base/browser/ui/aria/aria';
 import { createErrorWithActions } from 'vs/base/common/errorsWithActions';
 import { CancellationToken } from 'vs/base/common/cancellation';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 
 interface SearchInputEvent extends Event {
 	target: HTMLInputElement;
@@ -91,7 +92,7 @@ export class ExtensionsViewletViewsContribution implements IWorkbenchContributio
 	}
 
 	private registerViews(): void {
-		let viewDescriptors = [];
+		let viewDescriptors: IViewDescriptor[] = [];
 		viewDescriptors.push(this.createMarketPlaceExtensionsListViewDescriptor());
 		viewDescriptors.push(this.createEnabledExtensionsListViewDescriptor());
 		viewDescriptors.push(this.createDisabledExtensionsListViewDescriptor());
@@ -103,10 +104,9 @@ export class ExtensionsViewletViewsContribution implements IWorkbenchContributio
 		viewDescriptors.push(this.createOtherRecommendedExtensionsListViewDescriptor());
 		viewDescriptors.push(this.createWorkspaceRecommendedExtensionsListViewDescriptor());
 
-		if (this.extensionManagementServerService.extensionManagementServers.length > 1) {
-			for (const extensionManagementServer of this.extensionManagementServerService.extensionManagementServers) {
-				viewDescriptors.push(...this.createExtensionsViewDescriptorsForServer(extensionManagementServer));
-			}
+		if (this.extensionManagementServerService.otherExtensionManagementServer) {
+			viewDescriptors.push(...this.createExtensionsViewDescriptorsForServer(this.extensionManagementServerService.localExtensionManagementServer));
+			viewDescriptors.push(...this.createExtensionsViewDescriptorsForServer(this.extensionManagementServerService.otherExtensionManagementServer));
 		}
 
 		ViewsRegistry.registerViews(viewDescriptors);
@@ -329,7 +329,7 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 		}, this, this.disposables);
 	}
 
-	create(parent: HTMLElement): Promise<void> {
+	create(parent: HTMLElement): void {
 		addClass(parent, 'extensions-viewlet');
 		this.root = parent;
 
@@ -362,18 +362,17 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 		this.searchBox.onShouldFocusResults(() => this.focusListView(), this, this.disposables);
 
 		this.extensionsBox = append(this.root, $('.extensions'));
-		return super.create(this.extensionsBox);
+		super.create(this.extensionsBox);
 	}
 
-	setVisible(visible: boolean): Promise<void> {
+	setVisible(visible: boolean): void {
 		const isVisibilityChanged = this.isVisible() !== visible;
-		return super.setVisible(visible).then(() => {
-			if (isVisibilityChanged) {
-				if (visible) {
-					this.searchBox.focus();
-				}
+		super.setVisible(visible);
+		if (isVisibilityChanged) {
+			if (visible) {
+				this.searchBox.focus();
 			}
-		});
+		}
 	}
 
 	focus(): void {
@@ -420,7 +419,7 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 				this.instantiationService.createInstance(ChangeSortAction, 'extensions.sort.rating', localize('sort by rating', "Sort By: Rating"), this.onSearchChange, 'rating'),
 				this.instantiationService.createInstance(ChangeSortAction, 'extensions.sort.name', localize('sort by name', "Sort By: Name"), this.onSearchChange, 'name'),
 				new Separator(),
-				...(this.extensionManagementServerService.extensionManagementServers.length > 1 ? [this.groupByServerAction, new Separator()] : []),
+				...(this.extensionManagementServerService.otherExtensionManagementServer ? [this.groupByServerAction, new Separator()] : []),
 				this.instantiationService.createInstance(CheckForUpdatesAction, CheckForUpdatesAction.ID, CheckForUpdatesAction.LABEL),
 				...(this.configurationService.getValue(AutoUpdateConfigurationKey) ? [this.instantiationService.createInstance(DisableAutoUpdateAction, DisableAutoUpdateAction.ID, DisableAutoUpdateAction.LABEL)] : [this.instantiationService.createInstance(UpdateAllAction, UpdateAllAction.ID, UpdateAllAction.LABEL), this.instantiationService.createInstance(EnableAutoUpdateAction, EnableAutoUpdateAction.ID, EnableAutoUpdateAction.LABEL)]),
 				this.instantiationService.createInstance(InstallVSIXAction, InstallVSIXAction.ID, InstallVSIXAction.LABEL),
@@ -511,8 +510,10 @@ export class ExtensionsViewlet extends ViewContainerViewlet implements IExtensio
 	}
 
 	protected createView(viewDescriptor: IViewDescriptor, options: IViewletViewOptions): ViewletPanel {
-		for (const extensionManagementServer of this.extensionManagementServerService.extensionManagementServers) {
-			if (viewDescriptor.id === `server.extensionsList.${extensionManagementServer.authority}`) {
+		if (this.extensionManagementServerService.otherExtensionManagementServer) {
+			const extensionManagementServer = viewDescriptor.id === `server.extensionsList.${this.extensionManagementServerService.localExtensionManagementServer.authority}` ? this.extensionManagementServerService.localExtensionManagementServer
+				: viewDescriptor.id === `server.extensionsList.${this.extensionManagementServerService.otherExtensionManagementServer.authority}` ? this.extensionManagementServerService.otherExtensionManagementServer : null;
+			if (extensionManagementServer) {
 				const servicesCollection: ServiceCollection = new ServiceCollection();
 				servicesCollection.set(IExtensionManagementServerService, new SingleServerExtensionManagementServerService(extensionManagementServer));
 				servicesCollection.set(IExtensionManagementService, extensionManagementServer.extensionManagementService);
@@ -625,9 +626,12 @@ export class MaliciousExtensionChecker implements IWorkbenchContribution {
 		@IExtensionManagementService private extensionsManagementService: IExtensionManagementService,
 		@IWindowService private windowService: IWindowService,
 		@ILogService private logService: ILogService,
-		@INotificationService private notificationService: INotificationService
+		@INotificationService private notificationService: INotificationService,
+		@IEnvironmentService private environmentService: IEnvironmentService
 	) {
-		this.loopCheckForMaliciousExtensions();
+		if (!this.environmentService.disableExtensions) {
+			this.loopCheckForMaliciousExtensions();
+		}
 	}
 
 	private loopCheckForMaliciousExtensions(): void {

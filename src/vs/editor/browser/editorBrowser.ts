@@ -3,21 +3,21 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IDisposable } from 'vs/base/common/lifecycle';
 import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
 import { IMouseEvent } from 'vs/base/browser/mouseEvent';
-import * as editorCommon from 'vs/editor/common/editorCommon';
-import { Position, IPosition } from 'vs/editor/common/core/position';
-import { Selection } from 'vs/editor/common/core/selection';
-import { Range, IRange } from 'vs/editor/common/core/range';
+import { IDisposable } from 'vs/base/common/lifecycle';
 import * as editorOptions from 'vs/editor/common/config/editorOptions';
-import { OverviewRulerZone } from 'vs/editor/common/view/overviewZoneManager';
-import { IModelContentChangedEvent, IModelLanguageChangedEvent, IModelLanguageConfigurationChangedEvent, IModelOptionsChangedEvent, IModelDecorationsChangedEvent } from 'vs/editor/common/model/textModelEvents';
-import { ICursorPositionChangedEvent, ICursorSelectionChangedEvent } from 'vs/editor/common/controller/cursorEvents';
-import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 import { ICursors } from 'vs/editor/common/controller/cursorCommon';
+import { ICursorPositionChangedEvent, ICursorSelectionChangedEvent } from 'vs/editor/common/controller/cursorEvents';
+import { IPosition, Position } from 'vs/editor/common/core/position';
+import { IRange, Range } from 'vs/editor/common/core/range';
+import { Selection } from 'vs/editor/common/core/selection';
+import * as editorCommon from 'vs/editor/common/editorCommon';
+import { IIdentifiedSingleEditOperation, IModelDecoration, IModelDeltaDecoration, ITextModel } from 'vs/editor/common/model';
+import { IModelContentChangedEvent, IModelDecorationsChangedEvent, IModelLanguageChangedEvent, IModelLanguageConfigurationChangedEvent, IModelOptionsChangedEvent } from 'vs/editor/common/model/textModelEvents';
+import { OverviewRulerZone } from 'vs/editor/common/view/overviewZoneManager';
 import { IEditorWhitespace } from 'vs/editor/common/viewLayout/whitespaceComputer';
-import { ITextModel, IIdentifiedSingleEditOperation, IModelDecoration, IModelDeltaDecoration } from 'vs/editor/common/model';
+import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 
 /**
  * A view zone is a full horizontal rectangle that 'pushes' text down.
@@ -99,7 +99,7 @@ export interface IViewZoneChangeAccessor {
 /**
  * A positioning preference for rendering content widgets.
  */
-export enum ContentWidgetPositionPreference {
+export const enum ContentWidgetPositionPreference {
 	/**
 	 * Place the content widget exactly at a position
 	 */
@@ -160,7 +160,7 @@ export interface IContentWidget {
 /**
  * A positioning preference for rendering overlay widgets.
  */
-export enum OverlayWidgetPositionPreference {
+export const enum OverlayWidgetPositionPreference {
 	/**
 	 * Position the overlay widget in the top right corner
 	 */
@@ -183,7 +183,7 @@ export interface IOverlayWidgetPosition {
 	/**
 	 * The position preference for the overlay widget.
 	 */
-	preference: OverlayWidgetPositionPreference;
+	preference: OverlayWidgetPositionPreference | null;
 }
 /**
  * An overlay widgets renders on top of the text.
@@ -207,7 +207,7 @@ export interface IOverlayWidget {
 /**
  * Type of hit element with the mouse in the editor.
  */
-export enum MouseTargetType {
+export const enum MouseTargetType {
 	/**
 	 * Mouse is on top of an unknown element.
 	 */
@@ -299,6 +299,10 @@ export interface IMouseTarget {
  * A mouse event originating from the editor.
  */
 export interface IEditorMouseEvent {
+	readonly event: IMouseEvent;
+	readonly target: IMouseTarget;
+}
+export interface IPartialEditorMouseEvent {
 	readonly event: IMouseEvent;
 	readonly target: IMouseTarget | null;
 }
@@ -441,7 +445,7 @@ export interface ICodeEditor extends editorCommon.IEditor {
 	 * @internal
 	 * @event
 	 */
-	onMouseDrop(listener: (e: IEditorMouseEvent) => void): IDisposable;
+	onMouseDrop(listener: (e: IPartialEditorMouseEvent) => void): IDisposable;
 	/**
 	 * An event emitted on a "contextmenu".
 	 * @event
@@ -456,7 +460,7 @@ export interface ICodeEditor extends editorCommon.IEditor {
 	 * An event emitted on a "mouseleave".
 	 * @event
 	 */
-	onMouseLeave(listener: (e: IEditorMouseEvent) => void): IDisposable;
+	onMouseLeave(listener: (e: IPartialEditorMouseEvent) => void): IDisposable;
 	/**
 	 * An event emitted on a "keyup".
 	 * @event
@@ -605,7 +609,7 @@ export interface ICodeEditor extends editorCommon.IEditor {
 	executeEdits(source: string, edits: IIdentifiedSingleEditOperation[], endCursorState?: Selection[]): boolean;
 
 	/**
-	 * Execute multiple (concommitent) commands on the editor.
+	 * Execute multiple (concomitant) commands on the editor.
 	 * @param source The source of the call.
 	 * @param command The commands to execute
 	 */
@@ -691,7 +695,7 @@ export interface ICodeEditor extends editorCommon.IEditor {
 	addContentWidget(widget: IContentWidget): void;
 	/**
 	 * Layout/Reposition a content widget. This is a ping to the editor to call widget.getPosition()
-	 * and update appropiately.
+	 * and update appropriately.
 	 */
 	layoutContentWidget(widget: IContentWidget): void;
 	/**
@@ -705,7 +709,7 @@ export interface ICodeEditor extends editorCommon.IEditor {
 	addOverlayWidget(widget: IOverlayWidget): void;
 	/**
 	 * Layout/Reposition an overlay widget. This is a ping to the editor to call widget.getPosition()
-	 * and update appropiately.
+	 * and update appropriately.
 	 */
 	layoutOverlayWidget(widget: IOverlayWidget): void;
 	/**
@@ -743,7 +747,7 @@ export interface ICodeEditor extends editorCommon.IEditor {
 	 * The result position takes scrolling into account and is relative to the top left corner of the editor.
 	 * Explanation 1: the results of this method will change for the same `position` if the user scrolls the editor.
 	 * Explanation 2: the results of this method will not change if the container of the editor gets repositioned.
-	 * Warning: the results of this method are innacurate for positions that are outside the current editor viewport.
+	 * Warning: the results of this method are inaccurate for positions that are outside the current editor viewport.
 	 */
 	getScrolledVisiblePosition(position: IPosition): { top: number; left: number; height: number; } | null;
 
@@ -804,19 +808,11 @@ export interface IActiveCodeEditor extends ICodeEditor {
 	getDomNode(): HTMLElement;
 
 	/**
-	 * Get the hit test target at coordinates `clientX` and `clientY`.
-	 * The coordinates are relative to the top-left of the viewport.
-	 *
-	 * @returns Hit test target or null if the coordinates fall outside the editor or the editor has no model.
-	 */
-	getTargetAtClientPoint(clientX: number, clientY: number): IMouseTarget;
-
-	/**
 	 * Get the visible position for `position`.
 	 * The result position takes scrolling into account and is relative to the top left corner of the editor.
 	 * Explanation 1: the results of this method will change for the same `position` if the user scrolls the editor.
 	 * Explanation 2: the results of this method will not change if the container of the editor gets repositioned.
-	 * Warning: the results of this method are innacurate for positions that are outside the current editor viewport.
+	 * Warning: the results of this method are inaccurate for positions that are outside the current editor viewport.
 	 */
 	getScrolledVisiblePosition(position: IPosition): { top: number; left: number; height: number; };
 }

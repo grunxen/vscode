@@ -4,13 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
+import { CoreEditorCommand, CoreNavigationCommands } from 'vs/editor/browser/controller/coreCommands';
+import { IEditorMouseEvent, IPartialEditorMouseEvent } from 'vs/editor/browser/editorBrowser';
+import { ViewOutgoingEvents } from 'vs/editor/browser/view/viewOutgoingEvents';
 import { Position } from 'vs/editor/common/core/position';
 import { Selection } from 'vs/editor/common/core/selection';
-import { IEditorMouseEvent } from 'vs/editor/browser/editorBrowser';
-import { IViewModel } from 'vs/editor/common/viewModel/viewModel';
-import { ViewOutgoingEvents } from 'vs/editor/browser/view/viewOutgoingEvents';
-import { CoreNavigationCommands, CoreEditorCommand } from 'vs/editor/browser/controller/coreCommands';
 import { IConfiguration } from 'vs/editor/common/editorCommon';
+import { IViewModel } from 'vs/editor/common/viewModel/viewModel';
 
 export interface IMouseDispatchData {
 	position: Position;
@@ -293,7 +293,7 @@ export class ViewController {
 		this.outgoingEvents.emitMouseMove(e);
 	}
 
-	public emitMouseLeave(e: IEditorMouseEvent): void {
+	public emitMouseLeave(e: IPartialEditorMouseEvent): void {
 		this.outgoingEvents.emitMouseLeave(e);
 	}
 
@@ -309,7 +309,7 @@ export class ViewController {
 		this.outgoingEvents.emitMouseDrag(e);
 	}
 
-	public emitMouseDrop(e: IEditorMouseEvent): void {
+	public emitMouseDrop(e: IPartialEditorMouseEvent): void {
 		this.outgoingEvents.emitMouseDrop(e);
 	}
 }

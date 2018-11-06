@@ -47,6 +47,7 @@ import { CancellationToken } from 'vs/base/common/cancellation';
 import { ExtensionsTree, IExtensionData } from 'vs/workbench/parts/extensions/browser/extensionsViewer';
 import { ShowCurrentReleaseNotesAction } from 'vs/workbench/parts/update/electron-browser/update';
 import { KeybindingParser } from 'vs/base/common/keybindingParser';
+import { IStorageService } from 'vs/platform/storage/common/storage';
 
 function renderBody(body: string): string {
 	const styleSheetPath = require.toUrl('./media/markdown.css').replace('file://', 'vscode-core-resource://');
@@ -187,8 +188,9 @@ export class ExtensionEditor extends BaseEditor {
 		@IOpenerService private readonly openerService: IOpenerService,
 		@IPartService private readonly partService: IPartService,
 		@IExtensionTipsService private readonly extensionTipsService: IExtensionTipsService,
+		@IStorageService storageService: IStorageService
 	) {
-		super(ExtensionEditor.ID, telemetryService, themeService);
+		super(ExtensionEditor.ID, telemetryService, themeService, storageService);
 		this.disposables = [];
 		this.extensionReadme = null;
 		this.extensionChangelog = null;
@@ -377,7 +379,7 @@ export class ExtensionEditor extends BaseEditor {
 		reloadAction.extension = extension;
 
 		this.extensionActionBar.clear();
-		this.extensionActionBar.push([disabledStatusAction, reloadAction, updateAction, enableAction, disableAction, installAction, maliciousStatusAction], { icon: true, label: true });
+		this.extensionActionBar.push([reloadAction, updateAction, enableAction, disableAction, installAction, maliciousStatusAction, disabledStatusAction], { icon: true, label: true });
 		this.transientDisposables.push(enableAction, updateAction, reloadAction, disableAction, installAction, maliciousStatusAction, disabledStatusAction);
 
 		const ignoreAction = this.instantiationService.createInstance(IgnoreExtensionRecommendationAction);

@@ -18,7 +18,7 @@ import { IProgressRunner } from 'vs/platform/progress/common/progress';
 import { ITextModelService, ITextModelContentProvider } from 'vs/editor/common/services/resolverService';
 import { IWorkbenchContribution } from 'vs/workbench/common/contributions';
 import { ScrollType } from 'vs/editor/common/editorCommon';
-import { ITextModel } from 'vs/editor/common/model';
+import { ITextModel, IIdentifiedSingleEditOperation } from 'vs/editor/common/model';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { ResourceTextEdit } from 'vs/editor/common/modes';
 import { createTextBufferFactoryFromSnapshot } from 'vs/editor/common/model/textModel';
@@ -73,7 +73,7 @@ class ReplacePreviewModel extends Disposable {
 			ref = this._register(ref);
 			const sourceModel = ref.object.textEditorModel;
 			const sourceModelModeId = sourceModel.getLanguageIdentifier().language;
-			const replacePreviewModel = this.modelService.createModel(createTextBufferFactoryFromSnapshot(sourceModel.createSnapshot()), this.modeService.getOrCreateMode(sourceModelModeId), replacePreviewUri);
+			const replacePreviewModel = this.modelService.createModel(createTextBufferFactoryFromSnapshot(sourceModel.createSnapshot()), this.modeService.create(sourceModelModeId), replacePreviewUri);
 			this._register(fileMatch.onChange(modelChange => this.update(sourceModel, replacePreviewModel, fileMatch, modelChange)));
 			this._register(this.searchWorkbenchService.searchModel.onReplaceTermChanged(() => this.update(sourceModel, replacePreviewModel, fileMatch)));
 			this._register(fileMatch.onDispose(() => replacePreviewModel.dispose())); // TODO@Sandeep we should not dispose a model directly but rather the reference (depends on https://github.com/Microsoft/vscode/issues/17073)
@@ -164,7 +164,7 @@ export class ReplaceService implements IReplaceService {
 
 	private applyEditsToPreview(fileMatch: FileMatch, replaceModel: ITextModel): void {
 		const resourceEdits = this.createEdits(fileMatch, replaceModel.uri);
-		const modelEdits = [];
+		const modelEdits: IIdentifiedSingleEditOperation[] = [];
 		for (const resourceEdit of resourceEdits) {
 			for (const edit of resourceEdit.edits) {
 				const range = Range.lift(edit.range);
