@@ -139,7 +139,7 @@ export class ExtensionsListView extends ViewletPanel {
 				return null;
 			}
 			const model = new PagedModel([]);
-			this.setModel(model);
+			this.setModel(model, true);
 			return model;
 		};
 
